@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
-import pixel, presets, sim
+import aging, pixel, presets, sim
 
 import ipaddress
 # direct peers only: localhost and our own Tailscale tailnet (old-laptop nginx
@@ -116,6 +116,29 @@ async def pixel_preset():
 @api.post("/api/pixel/simulate")
 async def pixel_simulate(req: Request):
     return await _run(req, pixel.run)
+
+
+@api.post("/api/aging")
+async def aging_estimate(req: Request):
+    return await _run(req, aging.estimate)
+
+
+@api.post("/api/map")
+async def map_start(req: Request):
+    body = await req.body()
+    err = _gate(req, body)
+    if err:
+        return err
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return JSONResponse({"ok": False, "errors": ["JSON 형식 오류"]}, status_code=400)
+    return aging.start_map(payload)
+
+
+@api.get("/api/map/{jid}")
+async def map_get(jid: str):
+    return aging.get_map(jid)
 
 
 # same API at /api (nginx proxy) and /circuit/api (direct Tailscale preview)

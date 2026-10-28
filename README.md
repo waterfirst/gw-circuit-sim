@@ -34,6 +34,15 @@ All-PMOS 게이트 드라이버(GW) 시프트 레지스터를 TFT의 G/S/D 연�
 - 결과(기본값): DATA 2/3/4 V → 발광 전류 1673/749/194 nA. T1 ΔVth ±0.2 V → 전류 ±1.3% (보상 동작)
 - API: `GET /api/pixel/preset`, `POST /api/pixel/simulate`
 
+## 열화·온도 (`server/device.py`, `server/aging.py`)
+- TR마다 ΔVth, Ion 배수, Ioff 배수, SS 배수 입력. 온도 입력 시 Ioff ×exp(0.35 eV), SS ∝ T, |Vth| −2 mV/K (모델에 온도항이 없어 카드 값을 바꿈)
+- 고온 장기 구동: 정상 회로 파형에서 TR별 게이트 스트레스(켜진 비율, |Vgs|)를 재서 늘어진 지수 법칙으로 ΔVth·Ion·Ioff·SS 계산. 계수는 합성 가정이며 화면에서 수정 가능
+- VGH·VGL 마진 맵: 새 소자와 열화 소자를 격자로 비교 (구동 회로 = PASS/FAIL, 화소 = 발광 전류 변화 %)
+- 예: 8T의 T1을 ΔVth +3 V, Ion ×0.3으로 열화시키면 VGL −10 V에서 FAIL, −12 V 이하에서 PASS. T6 열화(홀드 처짐)는 VGH·VGL로 회복되지 않음
+
+## 설치 (다른 PC·회사)
+`AGENTS.md` 참고. 요약: `pip install -r requirements.txt` → `bash scripts/build_model.sh`(로컬 OpenVAF로 모델 컴파일) → `server/tests/selfcheck.py` ALL PASS 확인 → `bash scripts/run_local.sh`
+
 ## 실행
 ```bash
 python3 -m venv .venv && .venv/bin/pip install fastapi 'uvicorn[standard]' numpy

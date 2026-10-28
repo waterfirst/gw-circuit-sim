@@ -9,10 +9,13 @@ Derived from ~/gw_lab/backend.py, with these changes:
 import os, re, shutil, subprocess, time, uuid
 import numpy as np
 
+import device
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUNS = os.path.join(os.path.dirname(HERE), "runs")
-OSDI = os.path.join(HERE, "ptft_fit.osdi")
-KEEP_RUNS = 200
+OSDI = os.environ.get("GW_OSDI", os.path.join(HERE, "ptft_fit.osdi"))
+NGSPICE = os.environ.get("GW_NGSPICE", "ngspice")
+KEEP_RUNS = 400
 
 RAILS = {"VGH", "VGL", "CLK1", "CLK2"}
 STAGE_IO = {"IN", "OUT"}
@@ -64,6 +67,7 @@ def validate(desc):
     n["output"] = out_kind
     n["start_width_H"] = _num(desc, "start_width_H", 4.0, errors)
     n["start_lead_H"] = _num(desc, "start_lead_H", 0.5, errors)
+    n["temp_C"] = device.read_temp(desc, errors)
     mode = desc.get("clock_mode", "continuous")
     if mode not in ("continuous", "burst"):
         errors.append("clock_mode는 continuous 또는 burst")
@@ -93,7 +97,8 @@ def validate(desc):
                 net = "VGH"
             row[pin] = net
             used.setdefault(net, []).append(f"{name}.{pin}")
-        for k, key, d in [("W", "W_um", 4.0), ("L", "L_um", 4.5), ("dVT", "dVT", 0.0)]:
+        row.update(device.read_deg(p, name, errors))
+        for k, key, d in [("W", "W_um", 4.0), ("L", "L_um", 4.5)]:
             try:
                 v = float(p.get(k, d))
             except (TypeError, ValueError):
@@ -199,10 +204,9 @@ def build_netlist(n, t):
         flm_lows = [t["T_s"] + k * t["frame"] - n["flm_lead_us"] for k in range(n["frames"])]
         flm_pwl = pwl(flm_lows, PW + n["flm_lead_us"] + n["flm_lag_us"])
     L = [f"* GW service job: H={t['H']:.4f}us f={n['freq_kHz']}kHz VGH={VGH} VGL={VGL} "
-         f"clock={n['clock_mode']} frames={n['frames']} hold={n['hold_us']}us output={n['output']}"]
+         f"clock={n['clock_mode']} frames={n['frames']} hold={n['hold_us']}us output={n['output']} T={n['temp_C']}C"]
     for name, p in n["tft"].items():
-        L.append(f".model m{name} ptft_fit W={p['W']}u L={p['L']}u "
-                 f"VT0={n['VT0'] + p['dVT']:.3f} U0={n['U0']:.2f} POL=1")
+        L.append(device.card(name, 1, p["W"], p["L"], n["VT0"], n["U0"], p, n["temp_C"]))
     L += [".subckt gw IN CKA CKB OUT VGH VGL", "* TFT lines: N<name> D G S model"]
     ren = {"CLK1": "CKA", "CLK2": "CKB"}
     for name, p in n["tft"].items():
@@ -223,7 +227,7 @@ def build_netlist(n, t):
     vecs = ["v(FLM)", "v(CLK1)", "v(CLK2)"] + [f"v(OUT{i})" for i in range(1, n["stages"] + 1)]
     vecs += [f"v(x{i}.{m.lower()})" for i in range(1, n["stages"] + 1) for m in n["internal"]]
     L += [".options method=gear reltol=1e-4 abstol=1e-12 vntol=1e-6 gmin=1e-12",
-          ".control", "pre_osdi ptft_fit.osdi", f"tran 10n {t['TEND']:.3f}u 0 20n",
+          ".control", "set num_threads=1", "pre_osdi ptft_fit.osdi", f"tran 10n {t['TEND']:.3f}u 0 20n",
           "set wr_singlescale", "set wr_vecnames", f"wrdata out.txt {' '.join(vecs)}",
           ".endc", ".end"]
     return "\n".join(L) + "\n"
@@ -321,8 +325,8 @@ def run(desc, timeout_s=120):
     os.symlink(OSDI, os.path.join(jd, "ptft_fit.osdi"))
     t0 = time.time()
     try:
-        p = subprocess.run(["ngspice", "-b", "job.cir"], cwd=jd, capture_output=True, text=True,
-                           timeout=timeout_s, env={"PATH": os.environ.get("PATH", ""), "HOME": jd})
+        p = subprocess.run([NGSPICE, "-b", "job.cir"], cwd=jd, capture_output=True, text=True,
+                           timeout=timeout_s, env={"PATH": os.environ.get("PATH", ""), "HOME": jd, "OMP_NUM_THREADS": "1"})
         log = p.stdout + p.stderr
     except subprocess.TimeoutExpired:
         return {"ok": False, "job": jid, "netlist": net, "warnings": warnings,

@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import AgingPanel from "./AgingPanel";
+import DriverDiagram, { DIAGRAM_KEYS } from "./DriverDiagrams";
+import MarginMap from "./MarginMap";
 import Schematic from "./Schematic";
 import Waveforms from "./Waveforms";
-import { CAP_NETS, Circuit, PIN_NETS, SimResult, Tft } from "./types";
+import { CAP_NETS, Circuit, Deg, PIN_NETS, SimResult, Tft } from "./types";
 
 import { API } from "./api";
 
@@ -34,6 +37,7 @@ export default function DriverPage() {
   const [netErr, setNetErr] = useState("");
   const [stage, setStage] = useState(1);
   const [showNet, setShowNet] = useState(false);
+  const [presetKey, setPresetKey] = useState("8T");
 
   useEffect(() => {
     fetch(API + "/presets").then((r) => r.json()).then((p) => {
@@ -93,6 +97,16 @@ export default function DriverPage() {
     return out;
   }, [res, c, stage]);
 
+  // the wired drawing is only true while connections equal the loaded preset
+  const sameTopo = useMemo(() => {
+    const p = presets[presetKey];
+    if (!c || !p || !DIAGRAM_KEYS.has(presetKey)) return false;
+    const a = Object.keys(c.tft).sort(), b = Object.keys(p.tft).sort();
+    if (a.join() !== b.join() || c.caps.length !== p.caps.length) return false;
+    return a.every((k) => (["G", "S", "D"] as const).every((x) => c.tft[k][x] === p.tft[k][x]))
+      && c.caps.every((q, i) => q.a === p.caps[i].a && q.b === p.caps[i].b);
+  }, [c, presets, presetKey]);
+
   if (!c) return netErr ? <section className="card bad"><h2>연결 안 됨</h2><p>{netErr}</p></section> : <p>불러오는 중…</p>;
 
   const names = Object.keys(c.tft).sort((a, b) => +a.slice(1) - +b.slice(1));
@@ -104,7 +118,7 @@ export default function DriverPage() {
       <section className="card">
         <div className="row wrapline">
           <label className="num"><span>예제 회로</span>
-            <select value="" onChange={(e) => { if (e.target.value) { setC(structuredClone(presets[e.target.value])); setRes(null); } }}>
+            <select value="" onChange={(e) => { if (e.target.value) { setC(structuredClone(presets[e.target.value])); setPresetKey(e.target.value); setRes(null); } }}>
               <option value="">불러오기…</option>
               {Object.entries(presets).map(([k, p]) => <option key={k} value={k}>{p.name}</option>)}
             </select>
@@ -133,6 +147,7 @@ export default function DriverPage() {
           {c.output === "high_pulse" && (
             <Num label="시작 펄스 폭" unit="H" step={1} value={c.start_width_H ?? 4} onChange={(x) => set("start_width_H", x)} />
           )}
+          <Num label="온도" unit="°C" step={5} value={c.temp_C ?? 25} onChange={(x) => set("temp_C", x)} />
           <Num label={c.output === "high_pulse" ? "쉬는 레벨 스펙(≤)" : "OUT Low 스펙"} unit="V" value={c.out_low_req ?? -6} onChange={(x) => set("out_low_req", x)} />
         </div>
         <details>
@@ -152,7 +167,7 @@ export default function DriverPage() {
         <h2>TFT ({names.length}개)</h2>
         <div className="scroll">
           <table>
-            <thead><tr><th>TFT</th><th>G</th><th>S</th><th>D</th><th>W µm</th><th>L µm</th><th>ΔVth V</th><th></th></tr></thead>
+            <thead><tr><th>TFT</th><th>G</th><th>S</th><th>D</th><th>W µm</th><th>L µm</th><th>ΔVth V</th><th>Ion ×</th><th>Ioff ×</th><th>SS ×</th><th></th></tr></thead>
             <tbody>
               {names.map((n) => {
                 const p = c.tft[n];
@@ -164,7 +179,10 @@ export default function DriverPage() {
                     ))}
                     <td><input type="number" step={0.5} value={p.W} onChange={(e) => setTft(n, { W: parseFloat(e.target.value) })} /></td>
                     <td><input type="number" step={0.5} value={p.L} onChange={(e) => setTft(n, { L: parseFloat(e.target.value) })} /></td>
-                    <td><input type="number" step={0.05} value={p.dVT ?? 0} onChange={(e) => setTft(n, { dVT: parseFloat(e.target.value) })} /></td>
+                    <td><input type="number" step={0.05} className={p.dVT ? "aged" : ""} value={p.dVT ?? 0} onChange={(e) => setTft(n, { dVT: parseFloat(e.target.value) })} /></td>
+                    <td><input type="number" step={0.05} className={(p.mu ?? 1) !== 1 ? "aged" : ""} value={p.mu ?? 1} onChange={(e) => setTft(n, { mu: parseFloat(e.target.value) })} /></td>
+                    <td><input type="number" step={1} className={(p.ioff ?? 1) !== 1 ? "aged" : ""} value={p.ioff ?? 1} onChange={(e) => setTft(n, { ioff: parseFloat(e.target.value) })} /></td>
+                    <td><input type="number" step={0.05} className={(p.ss ?? 1) !== 1 ? "aged" : ""} value={p.ss ?? 1} onChange={(e) => setTft(n, { ss: parseFloat(e.target.value) })} /></td>
                     <td><button className="ghost" onClick={() => delTft(n)}>삭제</button></td>
                   </tr>
                 );
@@ -197,11 +215,17 @@ export default function DriverPage() {
 
       <section className="card">
         <h2>회로도 (1단)</h2>
+        {sameTopo
+          ? <div className="scroll"><DriverDiagram k={presetKey} c={c} /></div>
+          : <p className="warn">연결을 바꿨거나 배선도가 없는 회로라서 노드 태그 회로도로 보여줍니다.</p>}
+        <details open={!sameTopo}>
+        <summary>노드 태그 회로도 (연결 그대로)</summary>
         <Schematic
           title="홀수 단 기준. 짝수 단은 CLK1↔CLK2가 바뀌고, IN에는 전단 OUT이 들어갑니다."
           tfts={names.map((n) => ({ name: n, type: "P" as const, ...c.tft[n] }))}
           caps={c.caps.map((cp, i) => ({ name: `C${i + 1}`, a: cp.a, b: cp.b, value: `${cp.pF} pF` }))}
         />
+        </details>
       </section>
 
       <div className="runbar">
@@ -269,6 +293,10 @@ export default function DriverPage() {
           </section>
         </>
       )}
+      <AgingPanel kind="driver" desc={c}
+        onApply={(deg, temp) => setC({ ...c, temp_C: temp, tft: Object.fromEntries(Object.entries(c.tft).map(([k, p]) => [k, { ...p, ...(deg[k] ?? {}) }])) })}
+        onReset={() => setC({ ...c, tft: Object.fromEntries(Object.entries(c.tft).map(([k, p]) => [k, { ...p, dVT: 0, mu: 1, ioff: 1, ss: 1 } as Tft])) })} />
+      <MarginMap kind="driver" desc={c} vgh0={c.VGH} vgl0={c.VGL} />
     </div>
   );
 }

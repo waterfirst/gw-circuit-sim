@@ -8,7 +8,10 @@ Topology refs: US 11,056,060 B2, US 11,600,229 B2. Not any manufacturer's netlis
 import copy, os, re, subprocess, time, uuid
 import numpy as np
 
-from sim import OSDI, RUNS, _prune_runs
+_trapz = getattr(np, "trapezoid", None) or np.trapz  # numpy < 2 has only trapz
+
+import device
+from sim import NGSPICE, OSDI, RUNS, _prune_runs
 
 NETS = ["ELVDD", "ELVSS", "VINT", "VOBS", "DATA", "GW", "GC", "GI", "EM", "GO",
         "G", "S", "D", "AN"]
@@ -55,6 +58,7 @@ def validate(desc):
             errors.append(f"{k}={v} 범위 밖 ({lo}~{hi})")
         n[k] = v
     n["vth_check"] = bool(desc.get("vth_check", True))
+    n["temp_C"] = device.read_temp(desc, errors)
     n["models"] = {}
     for ty, d in PRESET["models"].items():
         src = (desc.get("models") or {}).get(ty, {})
@@ -93,9 +97,10 @@ def validate(desc):
             if p.get(pin) not in NETS:
                 errors.append(f"{name}.{pin}={p.get(pin)!r} 불가 (허용: {', '.join(NETS)})")
             row[pin] = p.get(pin, "G")
-        for k in ("W", "L", "dVT"):
+        row.update(device.read_deg(p, name, errors))
+        for k in ("W", "L"):
             try:
-                v = float(p.get(k, 0.0 if k == "dVT" else 3.0))
+                v = float(p.get(k, 3.0))
             except (TypeError, ValueError):
                 errors.append(f"{name}.{k}: 숫자가 아님"); v = 0.0
             lo, hi = LIM[k]
@@ -123,10 +128,9 @@ def netlist(n, t1_dvt=0.0, probe=True):
          ".options abstol=1e-16 reltol=1e-5 vntol=1e-8 method=gear"]
     for name, p in n["tft"].items():
         m = n["models"][p["type"]]
-        dv = p["dVT"] + (t1_dvt if name == "T1" else 0.0)
+        deg = dict(p, dVT=p["dVT"] + (t1_dvt if name == "T1" else 0.0))
         pol = 1 if p["type"] == "P" else -1
-        L.append(f".model m{name} ptft_fit W={p['W']}u L={p['L']}u VT0={m['VT0'] + dv:.4f} "
-                 f"U0={m['U0']} POL={pol}")
+        L.append(device.card(name, pol, p["W"], p["L"], m["VT0"], m["U0"], deg, n["temp_C"]))
     L += [".model oled D(IS=6e-26 N=3 RS=10k)",
           f"VELVDD ELVDD 0 {n['ELVDD']}", f"VELVSS ELVSS 0 {n['ELVSS']}",
           f"VVINT VINT 0 {n['VINT']}", f"VVOBS VOBS 0 {n['VOBS']}", f"VDATA DATA 0 {n['VDATA']}"]
@@ -135,7 +139,7 @@ def netlist(n, t1_dvt=0.0, probe=True):
         L.append(f"N_{name} {p['D']} {p['G']} {p['S']} m{name}")
     L += [f"Cst ELVDD G {n['Cst_fF']}f", f"Coled AN ELVSS {n['Coled_fF']}f",
           "Vsense AN ANO 0", "Doled ANO ELVSS oled",
-          ".control", "pre_osdi ptft_fit.osdi", f"tran 2u {2 * fr:.3f}u 0 10u"]
+          ".control", "set num_threads=1", "pre_osdi ptft_fit.osdi", f"tran 2u {2 * fr:.3f}u 0 10u"]
     if probe:
         L += ["set wr_singlescale", "set wr_vecnames",
               "wrdata out.txt v(G) v(S) v(D) v(AN) v(GI) v(GC) v(GW) v(EM) v(GO) i(Vsense)"]
@@ -150,8 +154,8 @@ def _sim(n, t1_dvt, probe, jd, tag):
     os.makedirs(sub)
     open(os.path.join(sub, "job.cir"), "w").write(netlist(n, t1_dvt, probe))
     os.symlink(OSDI, os.path.join(sub, "ptft_fit.osdi"))
-    p = subprocess.run(["ngspice", "-b", "job.cir"], cwd=sub, capture_output=True, text=True,
-                       timeout=90, env={"PATH": os.environ.get("PATH", ""), "HOME": sub})
+    p = subprocess.run([NGSPICE, "-b", "job.cir"], cwd=sub, capture_output=True, text=True,
+                       timeout=90, env={"PATH": os.environ.get("PATH", ""), "HOME": sub, "OMP_NUM_THREADS": "1"})
     open(os.path.join(sub, "ngspice.log"), "w").write(p.stdout + p.stderr)
     out = os.path.join(sub, "out.txt")
     if not os.path.exists(out):
@@ -166,8 +170,8 @@ def _metrics(n, tu, i_an, vg):
     em_end = n["timing"]["EM"][1]
     m_em = (tu >= fr + em_end + 50) & (tu <= 2 * fr - 5)
     m_fr = tu >= fr
-    i_em = float(np.trapezoid(i_an[m_em], tu[m_em]) / (tu[m_em][-1] - tu[m_em][0]))
-    i_fr = float(np.trapezoid(i_an[m_fr], tu[m_fr]) / (tu[m_fr][-1] - tu[m_fr][0]))
+    i_em = float(_trapz(i_an[m_em], tu[m_em]) / (tu[m_em][-1] - tu[m_em][0]))
+    i_fr = float(_trapz(i_an[m_fr], tu[m_fr]) / (tu[m_fr][-1] - tu[m_fr][0]))
     vg_em = float(np.mean(vg[m_em]))
     gc_end = fr + n["timing"]["GC"][1]
     vg_after_gc = float(vg[np.searchsorted(tu, gc_end + 5)])

@@ -1,5 +1,6 @@
 export type Pin = "G" | "S" | "D";
-export interface Tft { G: string; S: string; D: string; W: number; L: number; dVT?: number }
+export interface Deg { dVT?: number; mu?: number; ioff?: number; ss?: number }
+export interface Tft extends Deg { G: string; S: string; D: string; W: number; L: number }
 export interface Cap { a: string; b: string; pF: number }
 
 export interface Circuit {
@@ -8,7 +9,7 @@ export interface Circuit {
   hold_us: number; clock_mode: "continuous" | "burst";
   output?: "low_pulse" | "high_pulse"; start_width_H?: number; start_lead_H?: number;
   VT0?: number; U0?: number; flm_lead_us?: number; flm_lag_us?: number;
-  out_low_req?: number; hold_drop?: number;
+  out_low_req?: number; hold_drop?: number; temp_C?: number;
   tft: Record<string, Tft>;
   caps: Cap[];
 }
@@ -34,10 +35,10 @@ export const CAP_NETS = [...PIN_NETS, "GND"];
 export const PIXEL_NETS = ["ELVDD", "ELVSS", "VINT", "VOBS", "DATA", "GW", "GC", "GI", "EM", "GO", "G", "S", "D", "AN"];
 export const PIXEL_SIGS = ["GI", "GC", "GW", "EM", "GO"] as const;
 
-export interface PixelTft { type: "P" | "N"; G: string; S: string; D: string; W: number; L: number; dVT?: number }
+export interface PixelTft extends Deg { type: "P" | "N"; G: string; S: string; D: string; W: number; L: number }
 export interface PixelCircuit {
   name?: string; VGH: number; VGL: number; ELVDD: number; ELVSS: number; VINT: number; VOBS: number;
-  VDATA: number; Cst_fF: number; Coled_fF: number; frame_hz: number; vth_check: boolean;
+  VDATA: number; Cst_fF: number; Coled_fF: number; frame_hz: number; vth_check: boolean; temp_C?: number;
   models: Record<"P" | "N", { VT0: number; U0: number }>;
   timing_us: Record<string, [number, number]>;
   tft: Record<string, PixelTft>;
@@ -47,4 +48,13 @@ export interface PixelResult {
   ok: boolean; errors?: string[]; warnings?: string[]; job?: string; elapsed_s?: number; netlist?: string;
   metrics?: PixelMetrics; vth_check?: (PixelMetrics & { dVT: number; I_change_pct: number })[];
   series?: Record<string, number[]>; frame_us?: number;
+}
+
+export interface AgingRow { duty_on: number; vgs_on_avg: number; dVT: number; mu: number; ioff: number; ss: number }
+export interface AgingResult { ok: boolean; errors?: string[]; tft?: Record<string, AgingRow>; note?: string; law?: Record<string, number>; temp_C?: number; hours?: number }
+export interface MapCell { ok: boolean; pass?: boolean; err?: string; first?: string; n_problems?: number; I_em_nA?: number; change_pct?: number }
+export interface MapJob {
+  ok: boolean; state: "running" | "done" | "error"; kind: string; vgh: number[]; vgl: number[]; done: number; total: number;
+  aged: (MapCell | null)[][]; fresh: (MapCell | null)[][]; ref?: number | null; tol_pct: number; error?: string; elapsed_s?: number;
+  errors?: string[];
 }

@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import AgingPanel from "./AgingPanel";
+import MarginMap from "./MarginMap";
 import PixelDiagram from "./PixelDiagram";
 import Schematic from "./Schematic";
 import Waveforms from "./Waveforms";
@@ -104,6 +106,7 @@ export default function PixelPage() {
           <Num label="Cst" unit="fF" step={10} value={c.Cst_fF} onChange={(x) => set("Cst_fF", x)} />
           <Num label="C_OLED" unit="fF" step={5} value={c.Coled_fF} onChange={(x) => set("Coled_fF", x)} />
           <Num label="P형 |Vth|" unit="V" value={c.models.P.VT0} onChange={(x) => set("models", { ...c.models, P: { ...c.models.P, VT0: x } })} />
+          <Num label="온도" unit="°C" step={5} value={c.temp_C ?? 25} onChange={(x) => set("temp_C", x)} />
           <Num label="N형 Vth" unit="V" value={c.models.N.VT0} onChange={(x) => set("models", { ...c.models, N: { ...c.models.N, VT0: x } })} />
         </div>
         <label className="row"><input type="checkbox" checked={c.vth_check} onChange={(e) => set("vth_check", e.target.checked)} />
@@ -149,7 +152,7 @@ export default function PixelPage() {
         <h2>TFT</h2>
         <div className="scroll">
           <table>
-            <thead><tr><th>TFT</th><th>형</th><th>G</th><th>S</th><th>D</th><th>W µm</th><th>L µm</th><th>ΔVth V</th></tr></thead>
+            <thead><tr><th>TFT</th><th>형</th><th>G</th><th>S</th><th>D</th><th>W µm</th><th>L µm</th><th>ΔVth V</th><th>Ion ×</th><th>Ioff ×</th><th>SS ×</th></tr></thead>
             <tbody>
               {names.map((n) => {
                 const p = c.tft[n];
@@ -163,7 +166,10 @@ export default function PixelPage() {
                     ))}
                     <td><input type="number" step={0.5} value={p.W} onChange={(e) => setTft(n, { W: parseFloat(e.target.value) })} /></td>
                     <td><input type="number" step={0.5} value={p.L} onChange={(e) => setTft(n, { L: parseFloat(e.target.value) })} /></td>
-                    <td><input type="number" step={0.05} value={p.dVT ?? 0} onChange={(e) => setTft(n, { dVT: parseFloat(e.target.value) })} /></td>
+                    <td><input type="number" step={0.05} className={p.dVT ? "aged" : ""} value={p.dVT ?? 0} onChange={(e) => setTft(n, { dVT: parseFloat(e.target.value) })} /></td>
+                    <td><input type="number" step={0.05} className={(p.mu ?? 1) !== 1 ? "aged" : ""} value={p.mu ?? 1} onChange={(e) => setTft(n, { mu: parseFloat(e.target.value) })} /></td>
+                    <td><input type="number" step={1} className={(p.ioff ?? 1) !== 1 ? "aged" : ""} value={p.ioff ?? 1} onChange={(e) => setTft(n, { ioff: parseFloat(e.target.value) })} /></td>
+                    <td><input type="number" step={0.05} className={(p.ss ?? 1) !== 1 ? "aged" : ""} value={p.ss ?? 1} onChange={(e) => setTft(n, { ss: parseFloat(e.target.value) })} /></td>
                   </tr>
                 );
               })}
@@ -223,6 +229,10 @@ export default function PixelPage() {
           </section>
         </>
       )}
+      <AgingPanel kind="pixel" desc={c}
+        onApply={(deg, temp) => setC({ ...c, temp_C: temp, tft: Object.fromEntries(Object.entries(c.tft).map(([k, q]) => [k, { ...q, ...(deg[k] ?? {}) }])) })}
+        onReset={() => setC({ ...c, tft: Object.fromEntries(Object.entries(c.tft).map(([k, q]) => [k, { ...q, dVT: 0, mu: 1, ioff: 1, ss: 1 }])) })} />
+      <MarginMap kind="pixel" desc={c} vgh0={c.VGH} vgl0={c.VGL} />
     </div>
   );
 }
