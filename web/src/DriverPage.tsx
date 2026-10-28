@@ -39,7 +39,7 @@ export default function DriverPage() {
     fetch(API + "/presets").then((r) => r.json()).then((p) => {
       setPresets(p);
       setC(structuredClone(p["8T"]));
-    }).catch(() => setNetErr("서버에 연결할 수 없어요 (시뮬레이션 서버가 꺼져 있을 수 있음)"));
+    }).catch(() => setNetErr("시뮬레이션 서버에 연결할 수 없어요. 서버(신노트북)가 꺼져 있거나 공개 연결이 아직 열리지 않았습니다. 잠시 후 새로고침해 보세요."));
   }, []);
 
   const set = <K extends keyof Circuit>(k: K, v: Circuit[K]) => c && setC({ ...c, [k]: v });
@@ -93,7 +93,7 @@ export default function DriverPage() {
     return out;
   }, [res, c, stage]);
 
-  if (!c) return <p>{netErr || "불러오는 중…"}</p>;
+  if (!c) return netErr ? <section className="card bad"><h2>연결 안 됨</h2><p>{netErr}</p></section> : <p>불러오는 중…</p>;
 
   const names = Object.keys(c.tft).sort((a, b) => +a.slice(1) - +b.slice(1));
   const v = res?.verdict;

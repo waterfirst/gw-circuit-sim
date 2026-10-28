@@ -45,5 +45,7 @@ ngspice(OSDI 지원)가 PATH에 있어야 한다.
 
 ## 배포 구조
 - 시뮬레이션 서버: 신노트북 `gw-service.service`(systemd user), Tailscale IP에만 바인드, 피어는 localhost·tailnet만 허용
-- 공개 주소: `https://waterfirst.pro/circuit/` — 구노트북 nginx가 정적 파일을 내주고 `/circuit/api/`를 Tailscale로 신노트북에 넘긴다 (`deploy/`)
+- 공개 주소: `https://waterfirst.pro/circuit/` (구노트북 nginx가 정적 파일) — API는 신노트북 Tailscale Funnel `https://waterfirst-gpu.tail351ee9.ts.net/circuit/api` 로 직접 호출(CORS). 같은 앱이 Funnel 주소 `/circuit/` 에서도 열린다
+- nginx `/circuit/api/` 프록시(`deploy/`)는 설정 파일에만 넣었고 reload(sudo) 전이라 아직 안 쓴다
+- Funnel 끄기: `tailscale funnel --https=443 off`
 - 보호: 동시 실행 1, 대기 3, IP당 분당 12회, ngspice 120 s 제한, 시뮬레이션 길이 1500 µs 제한, 입력은 화이트리스트 노드와 범위 검사된 숫자만 넷리스트에 들어간다

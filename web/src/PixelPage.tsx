@@ -34,7 +34,7 @@ export default function PixelPage() {
 
   useEffect(() => {
     fetch(API + "/pixel/preset").then((r) => r.json()).then((p) => { setPreset(p); setC(structuredClone(p)); })
-      .catch(() => setErr("서버에 연결할 수 없어요"));
+      .catch(() => setErr("시뮬레이션 서버에 연결할 수 없어요. 서버(신노트북)가 꺼져 있거나 공개 연결이 아직 열리지 않았습니다. 잠시 후 새로고침해 보세요."));
   }, []);
 
   const set = <K extends keyof PixelCircuit>(k: K, v: PixelCircuit[K]) => c && setC({ ...c, [k]: v });
@@ -80,7 +80,7 @@ export default function PixelPage() {
     return [...sig, ...nodes, { key: "I_OLED", label: "I nA", data: i, range: [0, Math.ceil(imax * 1.1)] as [number, number] }];
   }, [res, c]);
 
-  if (!c) return <p>{err || "불러오는 중…"}</p>;
+  if (!c) return err ? <section className="card bad"><h2>연결 안 됨</h2><p>{err}</p></section> : <p>불러오는 중…</p>;
   const names = Object.keys(c.tft).sort((a, b) => +a.slice(1) - +b.slice(1));
 
   return (
