@@ -4,7 +4,7 @@ import Schematic from "./Schematic";
 import Waveforms from "./Waveforms";
 import { PIXEL_NETS, PIXEL_SIGS, PixelCircuit, PixelResult, PixelTft } from "./types";
 
-const API = import.meta.env.BASE_URL + "api";
+import { API } from "./api";
 
 function Num({ label, value, onChange, step = 0.1, unit }: {
   label: string; value: number; onChange: (v: number) => void; step?: number; unit?: string;

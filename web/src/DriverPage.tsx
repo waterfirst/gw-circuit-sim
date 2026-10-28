@@ -3,7 +3,7 @@ import Schematic from "./Schematic";
 import Waveforms from "./Waveforms";
 import { CAP_NETS, Circuit, PIN_NETS, SimResult, Tft } from "./types";
 
-const API = import.meta.env.BASE_URL + "api";
+import { API } from "./api";
 
 function Num({ label, value, onChange, step = 0.1, unit }: {
   label: string; value: number | undefined; onChange: (v: number) => void; step?: number; unit?: string;

@@ -1,9 +1,10 @@
-"""FastAPI wrapper for the GW simulator. Public traffic arrives only through
-the old-laptop nginx (/circuit/api/ -> this host over Tailscale)."""
+"""FastAPI wrapper for the GW simulator. Public traffic arrives through the
+old-laptop nginx (/circuit/api/ over Tailscale) or Tailscale Funnel."""
 import asyncio, json, os, time
 from collections import defaultdict, deque
 
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
@@ -26,6 +27,9 @@ MAX_QUEUE = 3
 MAX_BODY = 32_000
 
 app = FastAPI(title="GW circuit simulator", docs_url=None, redoc_url=None)
+# the page on waterfirst.pro calls this host's Tailscale Funnel URL directly
+app.add_middleware(CORSMiddleware, allow_origins=["https://waterfirst.pro", "https://www.waterfirst.pro"],
+                   allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
 _sem = asyncio.Semaphore(1)
 _waiting = 0
 _hits = defaultdict(deque)
@@ -33,9 +37,18 @@ api = APIRouter()
 DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "dist")
 
 
+NGINX_PEER = "100.98.224.68"  # old-laptop nginx sets X-Real-IP
+
+
 def _client_ip(req: Request) -> str:
-    fwd = req.headers.get("x-real-ip") or req.headers.get("x-forwarded-for", "")
-    return fwd.split(",")[0].strip() or req.client.host
+    """Real client for rate limiting. Trust only what our own proxy added:
+    nginx -> X-Real-IP; Tailscale Funnel -> last X-Forwarded-For entry.
+    Earlier XFF entries come from the client and can be forged."""
+    peer = req.client.host if req.client else ""
+    if peer == NGINX_PEER and req.headers.get("x-real-ip"):
+        return req.headers["x-real-ip"].strip()
+    xff = [x.strip() for x in req.headers.get("x-forwarded-for", "").split(",") if x.strip()]
+    return xff[-1] if xff else peer
 
 
 @app.middleware("http")
