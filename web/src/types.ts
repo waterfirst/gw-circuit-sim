@@ -6,6 +6,7 @@ export interface Circuit {
   name?: string;
   VGH: number; VGL: number; freq_kHz: number; stages: number; frames: number;
   hold_us: number; clock_mode: "continuous" | "burst";
+  output?: "low_pulse" | "high_pulse"; start_width_H?: number; start_lead_H?: number;
   VT0?: number; U0?: number; flm_lead_us?: number; flm_lag_us?: number;
   out_low_req?: number; hold_drop?: number;
   tft: Record<string, Tft>;
@@ -14,17 +15,36 @@ export interface Circuit {
 
 export interface StageVerdict {
   frame: number; stage: number; pulses: number; t_first_us: number | null;
-  low_V: number; hold_min_V: number; pass: boolean; why: string[];
+  width_us: number | null; active_V: number; rest_V: number; pass: boolean; why: string[];
 }
 
 export interface SimResult {
   ok: boolean; errors?: string[]; warnings?: string[]; job?: string; elapsed_s?: number;
   netlist?: string; internal?: string[];
   timing?: Record<string, number>;
-  verdict?: { pass: boolean; problems: string[]; stages: StageVerdict[] };
+  verdict?: { pass: boolean; problems: string[]; stages: StageVerdict[]; output: string };
   series?: Record<string, number[]>;
   rails?: { VGH: number; VGL: number };
 }
 
-export const PIN_NETS = ["VGH", "VGL", "CLK1", "CLK2", "IN", "OUT", "A", "B", "C", "D", "E", "Q", "QB"];
+export const PIN_NETS = ["VGH", "VGL", "CLK1", "CLK2", "IN", "OUT", "A", "B", "C", "D", "E", "Q", "QB",
+  "N1", "N2", "N3", "N4", "N5", "N6", "N7", "N8"];
 export const CAP_NETS = [...PIN_NETS, "GND"];
+
+export const PIXEL_NETS = ["ELVDD", "ELVSS", "VINT", "VOBS", "DATA", "GW", "GC", "GI", "EM", "GO", "G", "S", "D", "AN"];
+export const PIXEL_SIGS = ["GI", "GC", "GW", "EM", "GO"] as const;
+
+export interface PixelTft { type: "P" | "N"; G: string; S: string; D: string; W: number; L: number; dVT?: number }
+export interface PixelCircuit {
+  name?: string; VGH: number; VGL: number; ELVDD: number; ELVSS: number; VINT: number; VOBS: number;
+  VDATA: number; Cst_fF: number; Coled_fF: number; frame_hz: number; vth_check: boolean;
+  models: Record<"P" | "N", { VT0: number; U0: number }>;
+  timing_us: Record<string, [number, number]>;
+  tft: Record<string, PixelTft>;
+}
+export interface PixelMetrics { I_em_nA: number; I_frame_nA: number; Vg_em_V: number; Vg_after_GC_V: number }
+export interface PixelResult {
+  ok: boolean; errors?: string[]; warnings?: string[]; job?: string; elapsed_s?: number; netlist?: string;
+  metrics?: PixelMetrics; vth_check?: (PixelMetrics & { dVT: number; I_change_pct: number })[];
+  series?: Record<string, number[]>; frame_us?: number;
+}

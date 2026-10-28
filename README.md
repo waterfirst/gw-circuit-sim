@@ -1,4 +1,4 @@
-# GW 회로 시뮬레이터
+# 디스플레이 회로 시뮬레이터 (GIP + 8T1C LTPO 화소)
 
 All-PMOS 게이트 드라이버(GW) 시프트 레지스터를 TFT의 G/S/D 연결과 커패시터로 정의하면 ngspice로 돌려 단별 출력 파형과 PASS/FAIL을 보여주는 웹 서비스.
 
@@ -26,6 +26,13 @@ All-PMOS 게이트 드라이버(GW) 시프트 레지스터를 TFT의 G/S/D 연�
 | 7T | FAIL — QB를 Low로 리셋하는 소자가 없어 홀드 중 OUT 처짐, OUT2~5 이중 펄스 |
 | 8T (7T + T8: G=CLK1, D=QB, S=VGL) | PASS |
 | 9T (참고 회로) | PASS |
+| EM 12T3C (Samsung Display US 11,205,374 B2 1실시예 연결, 크기는 합성) | PASS (High 펄스, 폭 = 시작 폭 − 1H). M1·M2를 4u로 두면 CLK2 하강이 C1로 N3·N1을 끌어내려 출력이 안 나옴 → 20u |
+| GC / GI | EM형 단을 양의 펄스 n-scan 드라이버로 재사용 (가정). 시작 폭 4H / 2H |
+
+## 8T1C LTPO 화소 (`server/pixel.py`)
+- 토폴로지: T1 구동(P), T2 쓰기(P, GW), T3 보상(산화물 N, GC), T4 게이트 초기화(N, GI), T5·T6 발광(P, EM), T7 애노드 초기화·T8 온바이어스(P, GO). 참고 US 11,056,060 B2, US 11,600,229 B2. 값은 합성
+- 결과(기본값): DATA 2/3/4 V → 발광 전류 1673/749/194 nA. T1 ΔVth ±0.2 V → 전류 ±1.3% (보상 동작)
+- API: `GET /api/pixel/preset`, `POST /api/pixel/simulate`
 
 ## 실행
 ```bash

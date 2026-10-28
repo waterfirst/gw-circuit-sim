@@ -16,7 +16,7 @@ KEEP_RUNS = 200
 
 RAILS = {"VGH", "VGL", "CLK1", "CLK2"}
 STAGE_IO = {"IN", "OUT"}
-INTERNAL = {"A", "B", "C", "D", "E", "Q", "QB"}
+INTERNAL = {"A", "B", "C", "D", "E", "Q", "QB"} | {f"N{i}" for i in range(1, 9)}
 PIN_NETS = RAILS | STAGE_IO | INTERNAL
 CAP_NETS = PIN_NETS | {"GND"}
 TFT_NAMES = [f"T{i}" for i in range(1, 13)]
@@ -28,6 +28,7 @@ LIMITS = {
     "C_pF": (0.001, 20.0), "VT0": (0.5, 2.0), "U0": (10.0, 200.0),
     "flm_lead_us": (0.0, 3.0), "flm_lag_us": (-3.0, 3.0),
     "out_low_req": (-14.0, 0.0), "hold_drop": (0.1, 5.0),
+    "start_width_H": (0.5, 40.0), "start_lead_H": (0.0, 4.0),
 }
 MAX_TEND_US = 1500.0
 PWFRAC = 0.75  # CLK low width as a fraction of H
@@ -57,6 +58,12 @@ def validate(desc):
         n[k] = _num(desc, k, d, errors)
     for k, d in [("stages", 6), ("frames", 2)]:
         n[k] = _num(desc, k, d, errors, int)
+    out_kind = desc.get("output", "low_pulse")
+    if out_kind not in ("low_pulse", "high_pulse"):
+        errors.append("output은 low_pulse(GW형) 또는 high_pulse(EM·GC·GI형)")
+    n["output"] = out_kind
+    n["start_width_H"] = _num(desc, "start_width_H", 4.0, errors)
+    n["start_lead_H"] = _num(desc, "start_lead_H", 0.5, errors)
     mode = desc.get("clock_mode", "continuous")
     if mode not in ("continuous", "burst"):
         errors.append("clock_mode는 continuous 또는 burst")
@@ -146,6 +153,8 @@ def timing(n):
     TR = round(P * 0.00625, 4)
     T_s = 5 * P                       # FLM-sampling CLK1 low of frame 1
     scan = P * (n["stages"] / 2 + 2)  # time for the pulse to pass all stages
+    if n["output"] == "high_pulse":
+        scan += n["start_width_H"] * H
     # frame period must be a whole number of clock periods, otherwise the next
     # FLM no longer overlaps a CLK1 low and the second frame never starts
     frame = P * np.ceil((scan + max(n["hold_us"], P)) / P)
@@ -177,10 +186,20 @@ def build_netlist(n, t):
             s += P
         return lows
 
-    flm_lows = [t["T_s"] + k * t["frame"] - n["flm_lead_us"] for k in range(n["frames"])]
-    flm_w = PW + n["flm_lead_us"] + n["flm_lag_us"]
+    if n["output"] == "high_pulse":
+        # EM/GC/GI start pulse: rests at VGL, goes to VGH for start_width_H*H
+        H = t["H"]
+        flm_rise = [t["T_s"] + k * t["frame"] - n["start_lead_H"] * H for k in range(n["frames"])]
+        pts = [(0.0, VGL)]
+        for s0 in flm_rise:
+            w = n["start_width_H"] * H
+            pts += [(s0, VGL), (s0 + TR, VGH), (s0 + w, VGH), (s0 + w + TR, VGL)]
+        flm_pwl = " ".join(f"{a:.4f}u {b}" for a, b in pts)
+    else:
+        flm_lows = [t["T_s"] + k * t["frame"] - n["flm_lead_us"] for k in range(n["frames"])]
+        flm_pwl = pwl(flm_lows, PW + n["flm_lead_us"] + n["flm_lag_us"])
     L = [f"* GW service job: H={t['H']:.4f}us f={n['freq_kHz']}kHz VGH={VGH} VGL={VGL} "
-         f"clock={n['clock_mode']} frames={n['frames']} hold={n['hold_us']}us"]
+         f"clock={n['clock_mode']} frames={n['frames']} hold={n['hold_us']}us output={n['output']}"]
     for name, p in n["tft"].items():
         L.append(f".model m{name} ptft_fit W={p['W']}u L={p['L']}u "
                  f"VT0={n['VT0'] + p['dVT']:.3f} U0={n['U0']:.2f} POL=1")
@@ -193,7 +212,7 @@ def build_netlist(n, t):
         a, b = (ren.get(x, "0" if x == "GND" else x) for x in (c["a"], c["b"]))
         L.append(f"C{i} {a} {b} {c['pF']}p")
     L += [".ends", f"VGH VGH 0 {VGH}", f"VGL VGL 0 {VGL}",
-          f"VFLM FLM 0 PWL({pwl(flm_lows, flm_w)})",
+          f"VFLM FLM 0 PWL({flm_pwl})",
           f"VCLK1 CLK1 0 PWL({pwl(clk_lows(0.0), PW)})",
           f"VCLK2 CLK2 0 PWL({pwl(clk_lows(P / 2), PW)})"]
     prev = "FLM"
@@ -211,12 +230,14 @@ def build_netlist(n, t):
 
 
 def judge(n, t, tu, cols):
-    """Per stage and frame: exactly one low pulse, in scan order, reaching the
-    low spec, and OUT staying near VGH outside its own pulse."""
+    """Per stage and frame: exactly one active pulse, in scan order, with the
+    right levels. low_pulse (GW): active = low, must reach out_low_req, rest
+    stays >= VGH - hold_drop. high_pulse (EM/GC/GI): active = high, must reach
+    VGH - hold_drop, rest stays <= out_low_req (emission/oxide-off level)."""
     VGH, VGL = n["VGH"], n["VGL"]
     mid = (VGH + VGL) / 2
+    high = n["output"] == "high_pulse"
     stages, problems = [], []
-    prev_t = None
     for k in range(n["frames"]):
         f0 = t["T_s"] + k * t["frame"] - t["P"]
         f1 = f0 + t["frame"]
@@ -225,36 +246,53 @@ def judge(n, t, tu, cols):
         for i in range(1, n["stages"] + 1):
             o = cols[f"v(OUT{i})"][m]
             tt = tu[m]
-            low = o < mid
-            starts = np.where(low[1:] & ~low[:-1])[0] + 1
-            ends = np.where(~low[1:] & low[:-1])[0] + 1
+            act = o > mid if high else o < mid
+            starts = np.where(act[1:] & ~act[:-1])[0] + 1
+            ends = np.where(~act[1:] & act[:-1])[0] + 1
             cnt = len(starts)
-            vmin = float(o.min()) if len(o) else float("nan")
             t_first = float(tt[starts[0]]) if cnt else None
-            # hold high: outside [first pulse - P/2, last pulse end + P/2]
-            hold = np.ones_like(o, dtype=bool)
+            width = None
+            if cnt == 1 and len(ends) and ends[-1] > starts[0]:
+                width = float(tt[ends[-1]] - tt[starts[0]])
+            rest = np.ones_like(o, dtype=bool)
             if cnt:
                 lo_t = tt[starts[0]] - t["P"] / 2
-                hi_t = tt[ends[-1]] + t["P"] / 2 if len(ends) else tt[-1]
-                hold &= (tt < lo_t) | (tt > hi_t)
-            hold_min = float(o[hold].min()) if hold.any() else float("nan")
+                hi_t = tt[ends[-1]] + t["P"] / 2 if len(ends) and ends[-1] > starts[0] else tt[-1]
+                rest &= (tt < lo_t) | (tt > hi_t)
+            if high:
+                peak = float(o.max()) if len(o) else float("nan")
+                rest_v = float(o[rest].max()) if rest.any() else float("nan")
+            else:
+                peak = float(o.min()) if len(o) else float("nan")
+                rest_v = float(o[rest].min()) if rest.any() else float("nan")
             ok, why = True, []
             if cnt != 1:
                 ok = False; why.append(f"펄스 {cnt}개")
-            if vmin > n["out_low_req"]:
-                ok = False; why.append(f"Low {vmin:.2f} V > 스펙 {n['out_low_req']} V")
-            if hold_min < VGH - n["hold_drop"]:
-                ok = False; why.append(f"홀드 중 {hold_min:.2f} V까지 처짐")
+            if high:
+                if peak < VGH - n["hold_drop"]:
+                    ok = False; why.append(f"High {peak:.2f} V < VGH−{n['hold_drop']} V")
+                if rest_v > n["out_low_req"]:
+                    ok = False; why.append(f"쉬는 동안 {rest_v:.2f} V까지 올라감 (스펙 ≤ {n['out_low_req']} V)")
+                if width is not None:
+                    want = n["start_width_H"] * t["H"]
+                    if abs(width - want) > t["H"]:
+                        ok = False; why.append(f"폭 {width:.2f} µs ≠ 시작 펄스 {want:.2f} µs ±1H")
+            else:
+                if peak > n["out_low_req"]:
+                    ok = False; why.append(f"Low {peak:.2f} V > 스펙 {n['out_low_req']} V")
+                if rest_v < VGH - n["hold_drop"]:
+                    ok = False; why.append(f"홀드 중 {rest_v:.2f} V까지 처짐")
             if prev_t is not None and t_first is not None and t_first <= prev_t:
                 ok = False; why.append("순서 뒤바뀜")
             prev_t = t_first if t_first is not None else prev_t
             stages.append({"frame": k + 1, "stage": i, "pulses": cnt,
                            "t_first_us": round(t_first, 3) if t_first is not None else None,
-                           "low_V": round(vmin, 3), "hold_min_V": round(hold_min, 3),
+                           "width_us": round(width, 3) if width is not None else None,
+                           "active_V": round(peak, 3), "rest_V": round(rest_v, 3),
                            "pass": ok, "why": why})
             if not ok:
                 problems.append(f"F{k + 1} OUT{i}: " + ", ".join(why))
-    return {"pass": not problems, "problems": problems, "stages": stages}
+    return {"pass": not problems, "problems": problems, "stages": stages, "output": n["output"]}
 
 
 def _prune_runs():

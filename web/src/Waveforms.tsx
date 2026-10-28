@@ -8,7 +8,7 @@ const NODE_COLOR = "#2563eb";
 
 interface Props {
   t: number[];
-  rows: { key: string; label: string; data: number[] }[];
+  rows: { key: string; label: string; data: number[]; range?: [number, number] }[];
   vmin: number;
   vmax: number;
 }
@@ -44,13 +44,14 @@ export default function Waveforms({ t, rows, vmin, vmax }: Props) {
     const step = Math.max(1, Math.floor(idx.length / 1500));
     return rows.map((r, k) => {
       const top = k * (ROW + GAP);
-      const y = (v: number) => top + ROW - ((v - vmin) / (vmax - vmin)) * ROW;
+      const [lo, hi] = r.range ?? [vmin, vmax];
+      const y = (v: number) => top + ROW - ((v - lo) / (hi - lo || 1)) * ROW;
       let d = "";
       for (let j = 0; j < idx.length; j += step) {
         const i = idx[j];
         d += (j === 0 ? "M" : "L") + x(t[i]).toFixed(1) + "," + y(r.data[i]).toFixed(1);
       }
-      return { d, top, zero: y(0) };
+      return { d, top, zero: y(0), lo, hi };
     });
   }, [t, rows, t0, t1, vmin, vmax, W, LBL, ROW]);
 
@@ -73,7 +74,7 @@ export default function Waveforms({ t, rows, vmin, vmax }: Props) {
   };
 
   const color = (key: string) =>
-    COLORS[key] ?? (key.startsWith("OUT") ? OUT_COLOR : NODE_COLOR);
+    COLORS[key] ?? (key.startsWith("OUT") || key === "I_OLED" ? OUT_COLOR : NODE_COLOR);
 
   return (
     <div className="wave" ref={boxRef}>
@@ -107,6 +108,11 @@ export default function Waveforms({ t, rows, vmin, vmax }: Props) {
             <text x={LBL - 6} y={paths[k].top + ROW / 2 + 4} textAnchor="end" className="lbl">
               {r.label}
             </text>
+            {r.range && (
+              <text x={W - 10} y={paths[k].top + 11} textAnchor="end" className="tick">
+                {r.range[0].toFixed(1)}~{r.range[1].toFixed(1)}
+              </text>
+            )}
             <path d={paths[k].d} stroke={color(r.key)} fill="none" strokeWidth={1.4} />
           </g>
         ))}
@@ -118,7 +124,7 @@ export default function Waveforms({ t, rows, vmin, vmax }: Props) {
             width={Math.abs(x(drag[1]) - x(drag[0]))} height={H - AX} className="sel" />
         )}
       </svg>
-      <div className="hint">세로축: 각 행 {vmin} ~ {vmax} V, 가는 선 = 0 V · 시간 µs</div>
+      <div className="hint">세로축: 각 행 {vmin} ~ {vmax} V (오른쪽 위에 범위가 적힌 행은 그 범위), 가는 선 = 0 · 시간 µs</div>
     </div>
   );
 }

@@ -1,13 +1,13 @@
 """FastAPI wrapper for the GW simulator. Public traffic arrives only through
 the old-laptop nginx (/circuit/api/ -> this host over Tailscale)."""
-import asyncio, os, time
+import asyncio, json, os, time
 from collections import defaultdict, deque
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
-import presets, sim
+import pixel, presets, sim
 
 import ipaddress
 # direct peers only: localhost and our own Tailscale tailnet (old-laptop nginx
@@ -55,10 +55,8 @@ async def get_presets():
     return presets.PRESETS
 
 
-@api.post("/api/simulate")
-async def simulate(req: Request):
-    global _waiting
-    body = await req.body()
+def _gate(req: Request, body: bytes):
+    """Shared size / rate / queue checks. Returns an error response or None."""
     if len(body) > MAX_BODY:
         return JSONResponse({"ok": False, "errors": ["요청이 너무 큼"]}, status_code=413)
     ip, now = _client_ip(req), time.time()
@@ -69,18 +67,42 @@ async def simulate(req: Request):
         return JSONResponse({"ok": False, "errors": ["1분에 12회까지만 실행할 수 있어요. 잠시 후 다시."]},
                             status_code=429)
     q.append(now)
-    try:
-        desc = await req.json()
-    except ValueError:
-        return JSONResponse({"ok": False, "errors": ["JSON 형식 오류"]}, status_code=400)
     if _waiting >= MAX_QUEUE:
         return JSONResponse({"ok": False, "errors": ["대기열이 가득 찼어요. 잠시 후 다시."]}, status_code=429)
+    return None
+
+
+async def _run(req: Request, fn):
+    global _waiting
+    body = await req.body()
+    err = _gate(req, body)
+    if err:
+        return err
+    try:
+        desc = json.loads(body)
+    except ValueError:
+        return JSONResponse({"ok": False, "errors": ["JSON 형식 오류"]}, status_code=400)
     _waiting += 1
     try:
         async with _sem:
-            return await asyncio.to_thread(sim.run, desc)
+            return await asyncio.to_thread(fn, desc)
     finally:
         _waiting -= 1
+
+
+@api.post("/api/simulate")
+async def simulate(req: Request):
+    return await _run(req, sim.run)
+
+
+@api.get("/api/pixel/preset")
+async def pixel_preset():
+    return pixel.PRESET
+
+
+@api.post("/api/pixel/simulate")
+async def pixel_simulate(req: Request):
+    return await _run(req, pixel.run)
 
 
 # same API at /api (nginx proxy) and /circuit/api (direct Tailscale preview)
