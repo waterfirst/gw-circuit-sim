@@ -1,0 +1,12 @@
+[Unit]
+Description=GW circuit simulator API (Tailscale only)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/waterfirst/gw_service/server
+ExecStart=/home/waterfirst/gw_service/.venv/bin/uvicorn app:app --host 100.69.9.76 --port 8767
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
